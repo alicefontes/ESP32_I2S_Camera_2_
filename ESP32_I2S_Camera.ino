@@ -194,53 +194,149 @@ void testarVSYNCLocal()
   Serial.println("========== FIM TESTE ==========");
 }
 
+// void medirVSYNC()
+// {
+//   Serial.println();
+//   Serial.println("========== MEDICAO VSYNC ==========");
+//   Serial.println("[VSYNC] Medindo HIGH/LOW por 10 ciclos...");
+
+//   unsigned long t0, t1;
+//   unsigned long highTime, lowTime;
+//   unsigned long period;
+
+//   // Garante que começamos em LOW
+//   while (digitalRead(VSYNC) == HIGH);
+
+//   for (int i = 0; i < 10; i++)
+//   {
+//     // Espera subida
+//     while (digitalRead(VSYNC) == LOW);
+//     t0 = micros();
+
+//     // Espera descida
+//     while (digitalRead(VSYNC) == HIGH);
+//     t1 = micros();
+
+//     highTime = t1 - t0;
+
+//     // Espera próxima subida
+//     t0 = micros();
+//     while (digitalRead(VSYNC) == LOW);
+//     t1 = micros();
+
+//     lowTime = t1 - t0;
+
+//     period = highTime + lowTime;
+
+//     Serial.print("[VSYNC] Ciclo ");
+//     Serial.print(i + 1);
+//     Serial.print(" | HIGH = ");
+//     Serial.print(highTime);
+//     Serial.print(" us | LOW = ");
+//     Serial.print(lowTime);
+//     Serial.print(" us | PERIODO = ");
+//     Serial.print(period);
+//     Serial.println(" us");
+//   }
+
+//   Serial.println("[VSYNC] Medicao concluida.");
+//   Serial.println("========== FIM VSYNC ==========");
+// }
+
+// Função de medição de VSYNC com filtro de ruído elétrico (Debouncing de 10us)
+// void medirVSYNC()
+// {
+//   Serial.println("\n========== MEDICAO VSYNC FILTRADA (ESCRAVA) ==========");
+//   pinMode(VSYNC, INPUT);
+
+//   for (int i = 0; i < 10; i++)
+//   {
+//     // 1. Espera subida REAL (HIGH sustentado por > 10us)
+//     unsigned long tStartHigh = 0;
+//     while (true)
+//     {
+//       while (digitalRead(VSYNC) == LOW) { delayMicroseconds(1); }
+//       tStartHigh = micros();
+//       delayMicroseconds(10); 
+//       if (digitalRead(VSYNC) == HIGH) break; // Confirma borda real
+//     }
+
+//     // 2. Espera descida REAL (LOW sustentado por > 10us)
+//     unsigned long tStartLow = 0;
+//     while (true)
+//     {
+//       while (digitalRead(VSYNC) == HIGH) { delayMicroseconds(1); }
+//       tStartLow = micros();
+//       delayMicroseconds(10);
+//       if (digitalRead(VSYNC) == LOW) break; // Confirma descida real
+//     }
+
+//     // 3. Espera próxima subida REAL
+//     unsigned long tEnd = 0;
+//     while (true)
+//     {
+//       while (digitalRead(VSYNC) == LOW) { delayMicroseconds(1); }
+//       tEnd = micros();
+//       delayMicroseconds(10);
+//       if (digitalRead(VSYNC) == HIGH) break;
+//     }
+
+//     unsigned long highTime = tStartLow - tStartHigh;
+//     unsigned long lowTime = tEnd - tStartLow;
+//     unsigned long periodo = highTime + lowTime;
+
+//     Serial.printf("[VSYNC ESCRAVA] Ciclo %d | HIGH = %lu us | LOW = %lu us | PERIODO = %lu us\n", 
+//                   i + 1, highTime, lowTime, periodo);
+//   }
+//   Serial.println("========== FIM VSYNC ==========\n");
+// }
+
+//essa foi a menos pior
 void medirVSYNC()
 {
-  Serial.println();
-  Serial.println("========== MEDICAO VSYNC ==========");
-  Serial.println("[VSYNC] Medindo HIGH/LOW por 10 ciclos...");
-
-  unsigned long t0, t1;
-  unsigned long highTime, lowTime;
-  unsigned long period;
-
-  // Garante que começamos em LOW
-  while (digitalRead(VSYNC) == HIGH);
+  Serial.println("\n========== MEDICAO VSYNC COM FILTRO ANTIRUIDO (ESCRAVA) ==========");
+  pinMode(VSYNC, INPUT);
 
   for (int i = 0; i < 10; i++)
   {
-    // Espera subida
-    while (digitalRead(VSYNC) == LOW);
-    t0 = micros();
+    unsigned long tStartHigh = 0;
+    unsigned long tStartLow = 0;
+    unsigned long tEnd = 0;
 
-    // Espera descida
-    while (digitalRead(VSYNC) == HIGH);
-    t1 = micros();
+    // 1. Espera subida REAL (Sinal precisa ficar HIGH por > 10us para ignorar glitch)
+    while (true) {
+      while (digitalRead(VSYNC) == LOW); // Espera subir
+      tStartHigh = micros();
+      delayMicroseconds(10);             // Confirmação antiruído
+      if (digitalRead(VSYNC) == HIGH) break; // Se continuar HIGH, é sinal válido
+    }
 
-    highTime = t1 - t0;
+    // 2. Espera descida REAL (Sinal precisa ficar LOW por > 10us)
+    while (true) {
+      while (digitalRead(VSYNC) == HIGH); // Espera descer
+      tStartLow = micros();
+      delayMicroseconds(10);              // Confirmação antiruído
+      if (digitalRead(VSYNC) == LOW) break;
+    }
 
-    // Espera próxima subida
-    t0 = micros();
-    while (digitalRead(VSYNC) == LOW);
-    t1 = micros();
+    // 3. Espera próxima subida REAL
+    while (true) {
+      while (digitalRead(VSYNC) == LOW);
+      tEnd = micros();
+      delayMicroseconds(10);
+      if (digitalRead(VSYNC) == HIGH) break;
+    }
 
-    lowTime = t1 - t0;
+    unsigned long highTime = tStartLow - tStartHigh;
+    unsigned long lowTime = tEnd - tStartLow;
+    unsigned long periodo = highTime + lowTime;
 
-    period = highTime + lowTime;
-
-    Serial.print("[VSYNC] Ciclo ");
-    Serial.print(i + 1);
-    Serial.print(" | HIGH = ");
-    Serial.print(highTime);
-    Serial.print(" us | LOW = ");
-    Serial.print(lowTime);
-    Serial.print(" us | PERIODO = ");
-    Serial.print(period);
-    Serial.println(" us");
+    Serial.printf("[VSYNC ESCRAVA] Ciclo %d | HIGH = %lu us | LOW = %lu us | PERIODO = %lu us\n", 
+                  i + 1, highTime, lowTime, periodo);
+                  
+    delay(5); // Alimenta o Watchdog entre ciclos
   }
-
-  Serial.println("[VSYNC] Medicao concluida.");
-  Serial.println("========== FIM VSYNC ==========");
+  Serial.println("========== FIM VSYNC ==========\n");
 }
 
 // void medirVSYNC() {
@@ -468,113 +564,194 @@ void triggerCapture()
  * =========================================================
  */
 
+// void setup()
+// {
+//   Serial.begin(115200);
+
+//   // =====================================================
+//   // TRIGGER
+//   // =====================================================
+
+//   // pinMode(TRIGGER, OUTPUT);
+//   // digitalWrite(TRIGGER, LOW);
+
+//   // pinMode(TRIGGER_IN, INPUT);
+
+//   // Serial.println("[TRIGGER] GPIO26 = OUTPUT");
+//   // Serial.println("[TRIGGER] GPIO23 = INPUT");
+
+//   // =====================================================
+//   // SETUP ORIGINAL
+//   // =====================================================
+//   pinMode(SLAVE_READY, OUTPUT);
+//   digitalWrite(SLAVE_READY, LOW);
+
+//   pinMode(VSYNC, INPUT);
+
+//   Serial.println("[SETUP] Inicio");
+
+//   wifiMulti.addAP(ssid1, password1);
+
+//   Serial.println("[WIFI] Conectando...");
+
+//   if (wifiMulti.run() == WL_CONNECTED)
+//   {
+//     Serial.println("");
+//     Serial.println("[WIFI] WiFi connected");
+//     Serial.println("[WIFI] IP address: ");
+//     Serial.println(WiFi.localIP());
+//   }
+//   Serial.println("[WIFI] Saiu da conexão.");
+
+//   // Serial.println("[CAMERA #1] Antes de criar OV7670");
+
+//   // 2. BLOQUEIO DE SEGURANÇA:
+//   // Só avança para a Câmera quando o Mestre injetar os 10MHz de XCLK
+//   // aguardarXclkMestre(VSYNC);
+
+//   // // Pequeña pausa de 100ms para a câmera #2 responder limpo ao I2C
+//   // delay(100);
+
+//   Serial.println("[ESCRAVO] ESP32 inicializada.");
+//   Serial.println("[ESCRAVO] Enviando READY para a Mestre...");
+
+//   digitalWrite(SLAVE_READY, HIGH);
+
+//   Serial.println("[ESCRAVO] READY = HIGH.");
+//   Serial.println("[ESCRAVO] Aguardando XCLK da Mestre...");
+
+//   delay(200);
+
+//   Serial.println("[ESCRAVO] Iniciando câmera #2...");
+
+//   camera = new OV7670(
+//       OV7670::Mode::QQVGA_RGB565,
+//       SIOD, SIOC, VSYNC, HREF, XCLK, PCLK,
+//       D0, D1, D2, D3, D4, D5, D6, D7
+//   );
+
+//   Serial.println("[CAMERA] OV7670 criada");
+
+//   Serial.println("[BMP] Antes");
+
+//   BMP::construct16BitHeader(
+//       bmpHeader,
+//       camera->xres,
+//       camera->yres
+//   );
+
+//   Serial.println("[BMP] OK");
+
+//   Serial.println("[TFT] Antes");
+
+//   tft.initR(INITR_BLACKTAB);
+//   tft.fillScreen(0);
+
+//   Serial.println("[TFT] OK");
+
+//   Serial.println("[SERVER] Antes");
+
+//   server.begin();
+
+//   Serial.println("[SERVER] OK");
+
+//   Serial.println("[TRIGGER] Sistema pronto.");
+//   // testarVSYNCLocal();
+
+//   medirVSYNC();
+
+
+//   // =====================================================
+//   // MEDICAO PCLK
+//   // =====================================================
+//   //
+//   // Somente observacao do PCLK.
+//   // Nenhuma configuracao da camera, I2S ou DMA e alterada.
+//   //
+
+//   //medirPCLK();
+// }
+
+//esse tvaa funcionando bem
 void setup()
 {
   Serial.begin(115200);
 
-  // =====================================================
-  // TRIGGER
-  // =====================================================
-
-  // pinMode(TRIGGER, OUTPUT);
-  // digitalWrite(TRIGGER, LOW);
-
-  // pinMode(TRIGGER_IN, INPUT);
-
-  // Serial.println("[TRIGGER] GPIO26 = OUTPUT");
-  // Serial.println("[TRIGGER] GPIO23 = INPUT");
-
-  // =====================================================
-  // SETUP ORIGINAL
-  // =====================================================
+  // Garante pino de aviso em LOW durante a inicialização
   pinMode(SLAVE_READY, OUTPUT);
   digitalWrite(SLAVE_READY, LOW);
 
-  Serial.println("[SETUP] Inicio");
-
   wifiMulti.addAP(ssid1, password1);
-
   Serial.println("[WIFI] Conectando...");
 
   if (wifiMulti.run() == WL_CONNECTED)
   {
-    Serial.println("");
-    Serial.println("[WIFI] WiFi connected");
-    Serial.println("[WIFI] IP address: ");
-    Serial.println(WiFi.localIP());
+    Serial.println("[WIFI] Conectado!");
   }
-  Serial.println("[WIFI] Saiu da conexão.");
 
-  // Serial.println("[CAMERA #1] Antes de criar OV7670");
-
-  // 2. BLOQUEIO DE SEGURANÇA:
-  // Só avança para a Câmera quando o Mestre injetar os 10MHz de XCLK
-  // aguardarXclkMestre(VSYNC);
-
-  // // Pequeña pausa de 100ms para a câmera #2 responder limpo ao I2C
-  // delay(100);
-
-  Serial.println("[ESCRAVO] ESP32 inicializada.");
-  Serial.println("[ESCRAVO] Enviando READY para a Mestre...");
-
+  // Avisa a Mestre que o ESP32 escravo terminou o boot e o Wi-Fi
   digitalWrite(SLAVE_READY, HIGH);
+  Serial.println("[ESCRAVO] READY enviado (HIGH). Aguardando XCLK da Mestre...");
 
-  Serial.println("[ESCRAVO] READY = HIGH.");
-  Serial.println("[ESCRAVO] Aguardando XCLK da Mestre...");
+  // Dá um pequeno tempo para a Mestre estabilizar o XCLK
+  delay(100);
 
-  delay(200);
-
-  Serial.println("[ESCRAVO] Iniciando câmera #2...");
-
+  // Inicializa a câmera com o XCLK já fornecido pela Mestre
   camera = new OV7670(
       OV7670::Mode::QQVGA_RGB565,
       SIOD, SIOC, VSYNC, HREF, XCLK, PCLK,
       D0, D1, D2, D3, D4, D5, D6, D7
   );
 
-  Serial.println("[CAMERA] OV7670 criada");
-
-  Serial.println("[BMP] Antes");
-
-  BMP::construct16BitHeader(
-      bmpHeader,
-      camera->xres,
-      camera->yres
-  );
-
-  Serial.println("[BMP] OK");
-
-  Serial.println("[TFT] Antes");
-
+  BMP::construct16BitHeader(bmpHeader, camera->xres, camera->yres);
   tft.initR(INITR_BLACKTAB);
   tft.fillScreen(0);
-
-  Serial.println("[TFT] OK");
-
-  Serial.println("[SERVER] Antes");
-
   server.begin();
 
-  Serial.println("[SERVER] OK");
-
-  Serial.println("[TRIGGER] Sistema pronto.");
-  // testarVSYNCLocal();
-
   medirVSYNC();
-
-
-  // =====================================================
-  // MEDICAO PCLK
-  // =====================================================
-  //
-  // Somente observacao do PCLK.
-  // Nenhuma configuracao da camera, I2S ou DMA e alterada.
-  //
-
-  //medirPCLK();
 }
 
 
+// void setup()
+// {
+//   Serial.begin(115200);
+
+//   // Garante pino READY em LOW durante o boot inicial
+//   pinMode(SLAVE_READY, OUTPUT);
+//   digitalWrite(SLAVE_READY, LOW);
+
+//   wifiMulti.addAP(ssid1, password1);
+//   Serial.println("[WIFI] Conectando...");
+
+//   if (wifiMulti.run() == WL_CONNECTED)
+//   {
+//     Serial.println("[WIFI] Conectado!");
+//     Serial.print("[WIFI] IP: ");
+//     Serial.println(WiFi.localIP());
+//   }
+
+//   // Envia sinal READY para a Mestra ativar o XCLK
+//   digitalWrite(SLAVE_READY, HIGH);
+//   Serial.println("[ESCRAVO] READY enviado (HIGH). Aguardando XCLK da Mestre...");
+
+//   // Dá 150 ms para a Mestra receber o READY e habilitar a saída do gerador de clock
+//   delay(150);
+
+//   // Inicializa o driver da câmera com o XCLK fornecido
+//   camera = new OV7670(
+//       OV7670::Mode::QQVGA_RGB565,
+//       SIOD, SIOC, VSYNC, HREF, XCLK, PCLK,
+//       D0, D1, D2, D3, D4, D5, D6, D7
+//   );
+
+//   BMP::construct16BitHeader(bmpHeader, camera->xres, camera->yres);
+//   tft.initR(INITR_BLACKTAB);
+//   tft.fillScreen(0);
+//   server.begin();
+
+//   // Executa a medição de VSYNC agora que a câmera e o Wi-Fi estão estáveis
+//   medirVSYNC();
+// }
 /*
  * =========================================================
  * DISPLAY
