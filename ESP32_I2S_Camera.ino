@@ -13,6 +13,8 @@
 
 #include "driver/pcnt.h"
 
+//novo
+#include "driver/rmt.h"
 
 const int SIOD = 21;
 const int SIOC = 22;
@@ -54,6 +56,14 @@ unsigned char bmpHeader[BMP::headerSize];
 
 volatile bool captureRequested = false;
 
+//novo
+// =====================================================
+// MARCADOR DE VSYNC PARA A MESTRE
+// =====================================================
+
+const int VSYNC_EVENT_OUT = 32;
+
+rmt_obj_t* rmtVsyncOut = nullptr;
 
 /*
  * =========================================================
@@ -708,7 +718,35 @@ void setup()
   tft.fillScreen(0);
   server.begin();
 
-  medirVSYNC();
+  // =====================================================
+  // RMT TX - MARCADOR DE VSYNC
+  // GPIO32 da escrava -> GPIO23 da mestre
+  // =====================================================
+
+  pinMode(VSYNC_EVENT_OUT, OUTPUT);
+  digitalWrite(VSYNC_EVENT_OUT, LOW);
+
+  rmtVsyncOut = rmtInit(
+      VSYNC_EVENT_OUT,
+      true,          // TX
+      RMT_MEM_64
+  );
+
+  if (rmtVsyncOut == nullptr)
+  {
+    Serial.println("[RMT] ERRO ao inicializar TX no GPIO32.");
+  }
+  else
+  {
+    // 100 ns por tick = 10 MHz
+    float tickReal = rmtSetTick(rmtVsyncOut, 100.0);
+
+    Serial.print("[RMT] TX GPIO32 OK. Tick = ");
+    Serial.print(tickReal);
+    Serial.println(" ns");
+  }
+
+  // medirVSYNC();
 }
 
 
@@ -790,6 +828,31 @@ void displayRGB565(
 
 void loop()
 {
+  //novo
+  if (rmtVsyncOut != nullptr)
+  {
+    // Detecta a borda de VSYNC através do estado do GPIO34.
+    static int estadoVSYNCAnterior = LOW;
+
+    int estadoVSYNCAtual = digitalRead(VSYNC);
+
+    if (estadoVSYNCAtual == HIGH && estadoVSYNCAnterior == LOW)
+    {
+      rmt_data_t pulso;
+
+      pulso.duration0 = 10;  // 1 us
+      pulso.level0 = 1;
+
+      pulso.duration1 = 10;  // 1 us
+      pulso.level1 = 0;
+
+      rmtWrite(rmtVsyncOut, &pulso, 1);
+
+    }
+
+    estadoVSYNCAnterior = estadoVSYNCAtual;
+  }
+
   serve();
 
   if (captureRequested)
