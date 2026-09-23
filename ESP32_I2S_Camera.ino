@@ -56,6 +56,23 @@ unsigned char bmpHeader[BMP::headerSize];
 
 volatile bool captureRequested = false;
 
+
+// ============================================================
+// RMT RX - CAPTURA DO VSYNC DA PRÓPRIA ESCRAVA
+// GPIO34 = VSYNC da OV7670
+// ============================================================
+
+#define VSYNC_RMT_RX 34
+
+rmt_obj_t* rmtVsyncRx = nullptr;
+
+rmt_data_t vsyncRxBuffer[8];
+
+size_t vsyncRxNumSymbols = 8;
+
+bool vsyncRxAtivo = false;
+
+
 //novo
 // =====================================================
 // MARCADOR DE VSYNC PARA A MESTRE
@@ -687,11 +704,15 @@ void setup()
 {
   Serial.begin(115200);
 
-  // Garante pino de aviso em LOW durante a inicialização
+  // ============================================================
+  // READY
+  // ============================================================
+
   pinMode(SLAVE_READY, OUTPUT);
   digitalWrite(SLAVE_READY, LOW);
 
   wifiMulti.addAP(ssid1, password1);
+
   Serial.println("[WIFI] Conectando...");
 
   if (wifiMulti.run() == WL_CONNECTED)
@@ -699,29 +720,46 @@ void setup()
     Serial.println("[WIFI] Conectado!");
   }
 
-  // Avisa a Mestre que o ESP32 escravo terminou o boot e o Wi-Fi
-  digitalWrite(SLAVE_READY, HIGH);
-  Serial.println("[ESCRAVO] READY enviado (HIGH). Aguardando XCLK da Mestre...");
+  // ============================================================
+  // HANDSHAKE
+  // ============================================================
 
-  // Dá um pequeno tempo para a Mestre estabilizar o XCLK
+  digitalWrite(SLAVE_READY, HIGH);
+
+  Serial.println(
+    "[ESCRAVO] READY enviado (HIGH). Aguardando XCLK da Mestre..."
+  );
+
   delay(100);
 
-  // Inicializa a câmera com o XCLK já fornecido pela Mestre
+  // ============================================================
+  // CAMERA
+  // ============================================================
+
   camera = new OV7670(
       OV7670::Mode::QQVGA_RGB565,
       SIOD, SIOC, VSYNC, HREF, XCLK, PCLK,
       D0, D1, D2, D3, D4, D5, D6, D7
   );
 
-  BMP::construct16BitHeader(bmpHeader, camera->xres, camera->yres);
+  BMP::construct16BitHeader(
+      bmpHeader,
+      camera->xres,
+      camera->yres
+  );
+
   tft.initR(INITR_BLACKTAB);
   tft.fillScreen(0);
+
   server.begin();
 
-  // =====================================================
+
+  // ============================================================
   // RMT TX - MARCADOR DE VSYNC
   // GPIO32 da escrava -> GPIO23 da mestre
-  // =====================================================
+  //
+  // MANTIDO COMO ESTAVA
+  // ============================================================
 
   pinMode(VSYNC_EVENT_OUT, OUTPUT);
   digitalWrite(VSYNC_EVENT_OUT, LOW);
@@ -738,15 +776,107 @@ void setup()
   }
   else
   {
-    // 100 ns por tick = 10 MHz
-    float tickReal = rmtSetTick(rmtVsyncOut, 100.0);
+    float tickReal = rmtSetTick(
+        rmtVsyncOut,
+        100.0
+    );
 
     Serial.print("[RMT] TX GPIO32 OK. Tick = ");
     Serial.print(tickReal);
     Serial.println(" ns");
   }
 
-  // medirVSYNC();
+
+  // ============================================================
+  // RMT RX - CAPTURA DO VSYNC DA PRÓPRIA ESCRAVA
+  // GPIO34 = VSYNC da OV7670
+  //
+  // NÃO USA:
+  // - digitalRead(VSYNC) para detectar borda
+  // - attachInterrupt()
+  // ============================================================
+
+  rmtVsyncRx = rmtInit(
+      VSYNC_RMT_RX,
+      false,         // RX
+      RMT_MEM_64
+  );
+
+  if (rmtVsyncRx == nullptr)
+  {
+    Serial.println(
+      "[RMT RX] ERRO ao inicializar RX no GPIO34."
+    );
+
+    vsyncRxAtivo = false;
+  }
+  else
+  {
+    float tickRealRx = rmtSetTick(
+        rmtVsyncRx,
+        100.0
+    );
+
+    Serial.print("[RMT RX] GPIO34 OK. Tick = ");
+    Serial.print(tickRealRx);
+    Serial.println(" ns");
+
+    // ----------------------------------------------------------
+    // O RMT encerra a captura quando encontra um intervalo
+    // sem transições maior que este valor.
+    //
+    // 20 ticks x 100 ns = 2 us
+    // ----------------------------------------------------------
+
+    rmtSetRxThreshold(
+        rmtVsyncRx,
+        20
+    );
+
+    // ----------------------------------------------------------
+    // Arma a primeira captura.
+    //
+    // A assinatura abaixo é a da versão do core ESP32 2.0.11
+    // que estamos usando:
+    //
+    // rmtReadAsync(
+    //   rmt,
+    //   buffer,
+    //   quantidade,
+    //   eventFlag,
+    //   waitForData,
+    //   timeout
+    // )
+    // ----------------------------------------------------------
+
+    vsyncRxNumSymbols = 8;
+
+    bool rxOK = rmtReadAsync(
+        rmtVsyncRx,
+        vsyncRxBuffer,
+        vsyncRxNumSymbols,
+        nullptr,
+        false,
+        0
+    );
+
+    if (rxOK)
+    {
+      vsyncRxAtivo = true;
+
+      Serial.println(
+        "[RMT RX] Captura VSYNC GPIO34 armada."
+      );
+    }
+    else
+    {
+      vsyncRxAtivo = false;
+
+      Serial.println(
+        "[RMT RX] ERRO ao armar captura VSYNC."
+      );
+    }
+  }
 }
 
 
@@ -825,41 +955,144 @@ void displayRGB565(
  * LOOP
  * =========================================================
  */
-
 void loop()
 {
-  //novo
-  if (rmtVsyncOut != nullptr)
+  // ============================================================
+  // RMT RX - CAPTURA DO VSYNC DA ESCRAVA
+  // GPIO34
+  //
+  // O RMT detecta a transição por hardware.
+  // Não usa digitalRead().
+  // Não usa attachInterrupt().
+  // ============================================================
+
+  if (vsyncRxAtivo &&
+      rmtReceiveCompleted(rmtVsyncRx))
   {
-    // Detecta a borda de VSYNC através do estado do GPIO34.
-    static int estadoVSYNCAnterior = LOW;
+    // ----------------------------------------------------------
+    // A captura terminou.
+    // ----------------------------------------------------------
 
-    int estadoVSYNCAtual = digitalRead(VSYNC);
+    Serial.println(
+      "[RMT RX] Captura VSYNC concluida."
+    );
 
-    if (estadoVSYNCAtual == HIGH && estadoVSYNCAnterior == LOW)
+    Serial.print(
+      "[RMT RX] Simbolos recebidos = "
+    );
+
+    Serial.println(
+      vsyncRxNumSymbols
+    );
+
+    // ----------------------------------------------------------
+    // Primeiro símbolo capturado
+    // ----------------------------------------------------------
+
+    if (vsyncRxNumSymbols > 0)
     {
-      rmt_data_t pulso;
+      rmt_data_t simbolo = vsyncRxBuffer[0];
 
-      pulso.duration0 = 10;  // 1 us
-      pulso.level0 = 1;
+      Serial.print("[RMT RX] L0=");
+      Serial.print(simbolo.level0);
 
-      pulso.duration1 = 10;  // 1 us
-      pulso.level1 = 0;
+      Serial.print(" T0=");
+      Serial.print(simbolo.duration0);
 
-      rmtWrite(rmtVsyncOut, &pulso, 1);
+      Serial.print(" | L1=");
+      Serial.print(simbolo.level1);
 
+      Serial.print(" T1=");
+      Serial.println(simbolo.duration1);
+
+
+      // ========================================================
+      // RMT TX - ENVIA MARCADOR PARA A MESTRE
+      // GPIO32
+      //
+      // Mantém o mesmo formato que já utilizávamos:
+      // HIGH por 1 us
+      // LOW  por 1 us
+      // ========================================================
+
+      if (rmtVsyncOut != nullptr)
+      {
+        rmt_data_t pulso;
+
+        pulso.duration0 = 10;   // 1 us
+        pulso.level0    = 1;
+
+        pulso.duration1 = 10;   // 1 us
+        pulso.level1    = 0;
+
+        rmtWrite(
+          rmtVsyncOut,
+          &pulso,
+          1
+        );
+
+        static uint32_t contadorTX = 0;
+        contadorTX++;
+
+        Serial.print(
+          "[RMT TX] EVENTO VSYNC ESCRAVA #"
+        );
+
+        Serial.print(contadorTX);
+
+        Serial.print(
+          " | t="
+        );
+
+        Serial.println(micros());
+      }
     }
 
-    estadoVSYNCAnterior = estadoVSYNCAtual;
+
+    // ==========================================================
+    // REARMA O RMT RX
+    // ==========================================================
+
+    vsyncRxNumSymbols = 8;
+
+    bool rxOK = rmtReadAsync(
+      rmtVsyncRx,
+      vsyncRxBuffer,
+      vsyncRxNumSymbols,
+      nullptr,
+      false,
+      0
+    );
+
+    if (!rxOK)
+    {
+      Serial.println(
+        "[RMT RX] ERRO ao rearmar captura VSYNC."
+      );
+
+      vsyncRxAtivo = false;
+    }
   }
 
+
+  // ============================================================
+  // SERVIDOR WEB
+  // ============================================================
+
   serve();
+
+
+  // ============================================================
+  // CAPTURA NORMAL DA CAMERA
+  // ============================================================
 
   if (captureRequested)
   {
     captureRequested = false;
 
-    Serial.println("[CAPTURE] Trigger recebido.");
+    Serial.println(
+      "[CAPTURE] Trigger recebido."
+    );
 
     Serial.println(
       "[CAPTURE] Capturando proximo frame..."
